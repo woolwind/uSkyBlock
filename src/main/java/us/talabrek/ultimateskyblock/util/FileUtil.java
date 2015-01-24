@@ -14,10 +14,25 @@ public enum FileUtil {;
     private static final Logger log = Logger.getLogger(FileUtil.class.getName());
 
     public static void readConfig(FileConfiguration config, File configFile) {
+        if (configFile == null || !configFile.exists()) {
+            log.log(Level.INFO, "No "  + configFile + " found, it will be created");
+            return;
+        }
         try (Reader rdr = new InputStreamReader(new FileInputStream(configFile), "UTF-8")) {
             config.load(rdr);
         } catch (InvalidConfigurationException | IOException e) {
             log.log(Level.SEVERE, "Unable to read config file " + configFile, e);
+        }
+    }
+
+    public static void readConfig(FileConfiguration config, InputStream inputStream) {
+        if (inputStream == null) {
+            return;
+        }
+        try (Reader rdr = new InputStreamReader(inputStream, "UTF-8")) {
+            config.load(rdr);
+        } catch (InvalidConfigurationException | IOException e) {
+            log.log(Level.SEVERE, "Unable to read configuration", e);
         }
     }
 
