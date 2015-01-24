@@ -147,7 +147,6 @@ public class WorldEditHandler {
         World world = location.getWorld();
         Region cube = getRegion(world, region);
         for (Vector2D chunk : cube.getChunks()) {
-            world.unloadChunk(chunk.getBlockX(), chunk.getBlockZ(), true, false);
             world.loadChunk(chunk.getBlockX(), chunk.getBlockZ(), false);
             world.refreshChunk(chunk.getBlockX(), chunk.getBlockZ());
         }

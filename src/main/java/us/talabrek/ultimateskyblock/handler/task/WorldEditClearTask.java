@@ -81,7 +81,6 @@ public class WorldEditClearTask extends BukkitRunnable implements IncrementalTas
                     plugin.getLogger().log(Level.WARNING, "Unable to clear flat-land", e);
                 }
             }
-            editSession.commit();
         }
         return isComplete();
     }

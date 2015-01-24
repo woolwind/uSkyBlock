@@ -38,6 +38,7 @@ import us.talabrek.ultimateskyblock.command.IslandCommand;
 import us.talabrek.ultimateskyblock.event.*;
 import us.talabrek.ultimateskyblock.handler.MultiverseCoreHandler;
 import us.talabrek.ultimateskyblock.handler.VaultHandler;
+import us.talabrek.ultimateskyblock.handler.WorldEditHandler;
 import us.talabrek.ultimateskyblock.handler.WorldGuardHandler;
 import us.talabrek.ultimateskyblock.imports.impl.USBImporterExecutor;
 import us.talabrek.ultimateskyblock.island.IslandGenerator;
@@ -517,6 +518,7 @@ public class uSkyBlock extends JavaPlugin implements uSkyBlockAPI {
                 homeTeleport(player);
                 clearPlayerInventory(player);
                 clearEntitiesNearPlayer(player);
+                WorldEditHandler.refreshRegion(player.getLocation());
             }
         }, 10);
     }

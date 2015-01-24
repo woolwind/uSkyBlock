@@ -7,6 +7,7 @@ import com.sk89q.worldedit.regions.Region;
 import com.sk89q.worldguard.bukkit.WorldGuardPlugin;
 import com.sk89q.worldguard.domains.DefaultDomain;
 import com.sk89q.worldguard.protection.ApplicableRegionSet;
+import com.sk89q.worldguard.protection.UnsupportedIntersectionException;
 import com.sk89q.worldguard.protection.databases.ProtectionDatabaseException;
 import com.sk89q.worldguard.protection.flags.DefaultFlag;
 import com.sk89q.worldguard.protection.flags.InvalidFlagFormat;
@@ -249,6 +250,10 @@ public class WorldGuardHandler {
         ProtectedCuboidRegion islandRegion = new ProtectedCuboidRegion("island",
                 new BlockVector(islandCenter.subtract(r, 0, r)),
                 new BlockVector(islandCenter.add(r, 0, r)));
-        return !islandRegion.getIntersectingRegions(Collections.singletonList(spawn)).isEmpty();
+        try {
+            return !islandRegion.getIntersectingRegions(Collections.singletonList(spawn)).isEmpty();
+        } catch (UnsupportedIntersectionException e) {
+            return false;
+        }
     }
 }
