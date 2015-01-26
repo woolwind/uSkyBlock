@@ -1,6 +1,7 @@
 package us.talabrek.ultimateskyblock;
 
 import com.sk89q.worldedit.Vector;
+import com.sk89q.worldedit.WorldEdit;
 import com.sk89q.worldedit.regions.CuboidRegion;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
@@ -36,6 +37,7 @@ import us.talabrek.ultimateskyblock.api.uSkyBlockAPI;
 import us.talabrek.ultimateskyblock.async.AsyncBalancedExecutor;
 import us.talabrek.ultimateskyblock.async.BalancedExecutor;
 import us.talabrek.ultimateskyblock.async.AbstractBalancedExecutor;
+import us.talabrek.ultimateskyblock.async.SyncBalancedExecutor;
 import us.talabrek.ultimateskyblock.challenge.ChallengeLogic;
 import us.talabrek.ultimateskyblock.challenge.ChallengesCommand;
 import us.talabrek.ultimateskyblock.command.AdminCommand;
@@ -166,7 +168,7 @@ public class uSkyBlock extends JavaPlugin implements uSkyBlockAPI {
         missingRequirements = null;
         instance = this;
         FileUtil.init(getDataFolder());
-        executor = new AbstractBalancedExecutor(Bukkit.getScheduler());
+        executor = new SyncBalancedExecutor(Bukkit.getScheduler());
         asyncExecutor = new AsyncBalancedExecutor(Bukkit.getScheduler());
         activePlayers.clear();
         uSkyBlock.pName = "[" + getDescription().getName() + "] ";
@@ -208,9 +210,9 @@ public class uSkyBlock extends JavaPlugin implements uSkyBlockAPI {
                             }
                         }
                     }
-                }, 100);
+                }, 50L);
             }
-        }, 150L);
+        }, 50L);
         try {
             Metrics metrics = new Metrics(this);
             metrics.start();
@@ -502,6 +504,7 @@ public class uSkyBlock extends JavaPlugin implements uSkyBlockAPI {
         getLogger().log(Level.FINE, "executing postRestart for " + player + " on " + next);
         islandGenerator.createIsland(this, player, next);
         changePlayerBiome(player, "OCEAN");
+        WorldEditHandler.unloadRegion(next);
         next.setY((double) Settings.island_height);
         setNewPlayerIsland(player, next);
         setRestartCooldown(player);
@@ -510,11 +513,12 @@ public class uSkyBlock extends JavaPlugin implements uSkyBlockAPI {
             public void run() {
                 getLogger().log(Level.FINE, "porting player back to the island");
                 homeTeleport(player);
+                WorldEditHandler.loadRegion(next);
+                clearPlayerInventory(player);
+                clearEntitiesNearPlayer(player);
                 getServer().getScheduler().runTaskLater(uSkyBlock.this, new Runnable() {
                     @Override
                     public void run() {
-                        clearPlayerInventory(player);
-                        //clearEntitiesNearPlayer(player);
                         WorldEditHandler.refreshRegion(player.getLocation());
                     }
                 }, 20);

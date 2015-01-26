@@ -4,15 +4,17 @@ import org.bukkit.plugin.Plugin;
 import org.bukkit.scheduler.BukkitScheduler;
 
 /**
- * A non-blocking AsyncBalancedExecutor
+ * A BalancedExecutor that executes tasks synchronously
  */
-public class AsyncBalancedExecutor extends AbstractBalancedExecutor {
-    public AsyncBalancedExecutor(BukkitScheduler scheduler) {
+public class SyncBalancedExecutor extends AbstractBalancedExecutor {
+
+    public SyncBalancedExecutor(BukkitScheduler scheduler) {
         super(scheduler);
     }
 
     @Override
     protected void doLater(Plugin plugin, Runnable runnable, long delay) {
-        scheduler.runTaskLaterAsynchronously(plugin, runnable, delay);
+        scheduler.runTaskLater(plugin, runnable, delay);
     }
+
 }
