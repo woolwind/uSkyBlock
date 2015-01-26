@@ -2,11 +2,17 @@ package us.talabrek.ultimateskyblock;
 
 import com.sk89q.worldedit.Vector;
 import com.sk89q.worldedit.regions.CuboidRegion;
-import org.bukkit.*;
+import org.bukkit.Bukkit;
+import org.bukkit.ChatColor;
+import org.bukkit.Chunk;
+import org.bukkit.Location;
+import org.bukkit.Material;
+import org.bukkit.World;
+import org.bukkit.WorldCreator;
+import org.bukkit.WorldType;
 import org.bukkit.block.Biome;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
-import org.bukkit.block.Chest;
 import org.bukkit.command.CommandSender;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.configuration.file.YamlConfiguration;
@@ -16,7 +22,6 @@ import org.bukkit.entity.Monster;
 import org.bukkit.entity.Player;
 import org.bukkit.event.HandlerList;
 import org.bukkit.generator.ChunkGenerator;
-import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.material.MaterialData;
 import org.bukkit.plugin.PluginDescriptionFile;
@@ -30,12 +35,16 @@ import us.talabrek.ultimateskyblock.api.event.uSkyBlockScoreChangedEvent;
 import us.talabrek.ultimateskyblock.api.uSkyBlockAPI;
 import us.talabrek.ultimateskyblock.async.AsyncBalancedExecutor;
 import us.talabrek.ultimateskyblock.async.BalancedExecutor;
-import us.talabrek.ultimateskyblock.async.SyncBalancedExecutor;
+import us.talabrek.ultimateskyblock.async.AbstractBalancedExecutor;
 import us.talabrek.ultimateskyblock.challenge.ChallengeLogic;
 import us.talabrek.ultimateskyblock.challenge.ChallengesCommand;
 import us.talabrek.ultimateskyblock.command.AdminCommand;
 import us.talabrek.ultimateskyblock.command.IslandCommand;
-import us.talabrek.ultimateskyblock.event.*;
+import us.talabrek.ultimateskyblock.event.ExploitEvents;
+import us.talabrek.ultimateskyblock.event.GriefEvents;
+import us.talabrek.ultimateskyblock.event.ItemDropEvents;
+import us.talabrek.ultimateskyblock.event.MenuEvents;
+import us.talabrek.ultimateskyblock.event.PlayerEvents;
 import us.talabrek.ultimateskyblock.handler.MultiverseCoreHandler;
 import us.talabrek.ultimateskyblock.handler.VaultHandler;
 import us.talabrek.ultimateskyblock.handler.WorldEditHandler;
@@ -49,7 +58,8 @@ import us.talabrek.ultimateskyblock.island.LevelLogic;
 import us.talabrek.ultimateskyblock.island.task.RecalculateRunnable;
 import us.talabrek.ultimateskyblock.player.PlayerInfo;
 import us.talabrek.ultimateskyblock.player.PlayerNotifier;
-import us.talabrek.ultimateskyblock.util.ItemStackUtil;
+import us.talabrek.ultimateskyblock.util.FileUtil;
+import us.talabrek.ultimateskyblock.util.LocationUtil;
 import us.talabrek.ultimateskyblock.util.PlayerUtil;
 import us.talabrek.ultimateskyblock.uuid.FilePlayerDB;
 import us.talabrek.ultimateskyblock.uuid.PlayerDB;
@@ -59,14 +69,16 @@ import us.talabrek.ultimateskyblock.uuid.PlayerNameChangeManager;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
-import java.nio.file.Files;
-import java.nio.file.Paths;
-import java.nio.file.StandardCopyOption;
-import java.util.*;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Stack;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Level;
 
-import static us.talabrek.ultimateskyblock.util.FileUtil.readConfig;
+import static us.talabrek.ultimateskyblock.util.FileUtil.getFileConfiguration;
 
 public class uSkyBlock extends JavaPlugin implements uSkyBlockAPI {
     private static final String[][] depends = new String[][]{
@@ -75,13 +87,12 @@ public class uSkyBlock extends JavaPlugin implements uSkyBlockAPI {
             new String[]{"WorldGuard", "5.9"},
     };
     private static String missingRequirements = null;
-    private final Map<String, FileConfiguration> configFiles = new ConcurrentHashMap<>();
 
     private SkyBlockMenu menu;
     private ChallengeLogic challengeLogic;
     private LevelLogic levelLogic;
     private IslandLogic islandLogic;
-    private IslandGenerator islandGenerator;
+    public IslandGenerator islandGenerator;
     private PlayerNotifier notifier;
     private USBImporterExecutor importer;
     private BalancedExecutor executor;
@@ -105,7 +116,9 @@ public class uSkyBlock extends JavaPlugin implements uSkyBlockAPI {
     Map<UUID, Long> restartCooldown;
     Map<UUID, Long> biomeCooldown;
     private final Map<String, PlayerInfo> activePlayers = new ConcurrentHashMap<>();
-    private boolean purgeActive;
+
+    private volatile boolean purgeActive;
+    private volatile boolean protectAllActive;
 
     private BukkitTask autoRecalculateTask;
 
@@ -114,8 +127,6 @@ public class uSkyBlock extends JavaPlugin implements uSkyBlockAPI {
     }
 
     public uSkyBlock() {
-        // TODO: 08/12/2014 - R4zorax: Most of these should be converted to local variables
-        configFiles.clear();
         this.lastIslandConfig = null;
         this.orphans = null;
         this.orphanFile = null;
@@ -131,54 +142,19 @@ public class uSkyBlock extends JavaPlugin implements uSkyBlockAPI {
 
     public void onDisable() {
         HandlerList.unregisterAll(this);
+        Bukkit.getScheduler().cancelTasks(this);
         try {
             this.unloadPlayerFiles();
             if (lastIsland != null) {
                 setLastIsland(lastIsland);
             }
+            skyBlockWorld = null; // Force a reload on config.
         } catch (Exception e) {
             log(Level.INFO, "Something went wrong saving the island and/or party data!", e);
         }
     }
 
-    /**
-     * System-encoding agnostic config-reader
-     */
-    public FileConfiguration getFileConfiguration(String configName) {
-        // Caching, for your convenience! (and a bigger memory print!)
-        if (!configFiles.containsKey(configName)) {
-            FileConfiguration config = new YamlConfiguration();
-            try {
-                // read from datafolder!
-                File configFile = new File(getDataFolder(), configName);
-                // TODO: 09/12/2014 - R4zorax: Also replace + backup if jar-version is newer than local version
-                FileConfiguration configFolder = new YamlConfiguration();
-                FileConfiguration configJar = new YamlConfiguration();
-                readConfig(configFolder, configFile);
-                readConfig(configJar, getClassLoader().getResourceAsStream(configName));
-                if (!configFile.exists() || configFolder.getInt("version", 0) < configJar.getInt("version", 0)) {
-                    if (configFile.exists()) {
-                        File backupFolder = new File(getDataFolder(), "backup");
-                        backupFolder.mkdirs();
-                        String bakFile = String.format("%1$s-%2$tY%2$tm%2$td-%2$tH%2$tM.bak", configName, new Date());
-                        log(Level.INFO, "Moving existing config " + configName + " to backup/" + bakFile);
-                        Files.move(Paths.get(configFile.toURI()),
-                                Paths.get(new File(backupFolder, bakFile).toURI()),
-                                StandardCopyOption.REPLACE_EXISTING);
-                    }
-                    config = configJar;
-                    config.save(configFile);
-                } else if (configFile.exists()) {
-                    // FORCE utf8 - don't rely on super.getConfig() or FileConfiguration.load()
-                    readConfig(config, configFile);
-                }
-            } catch (Exception e) {
-                log(Level.SEVERE, "Unable to handle config-file " + configName, e);
-            }
-            configFiles.put(configName, config);
-        }
-        return configFiles.get(configName);
-    }
+
 
     @Override
     public FileConfiguration getConfig() {
@@ -186,11 +162,12 @@ public class uSkyBlock extends JavaPlugin implements uSkyBlockAPI {
     }
 
     public void onEnable() {
+        skyBlockWorld = null; // Force a re-import or what-ever...
         missingRequirements = null;
         instance = this;
-        executor = new SyncBalancedExecutor(Bukkit.getScheduler());
+        FileUtil.init(getDataFolder());
+        executor = new AbstractBalancedExecutor(Bukkit.getScheduler());
         asyncExecutor = new AsyncBalancedExecutor(Bukkit.getScheduler());
-        configFiles.clear();
         activePlayers.clear();
         uSkyBlock.pName = "[" + getDescription().getName() + "] ";
         reloadConfigs();
@@ -332,8 +309,23 @@ public class uSkyBlock extends JavaPlugin implements uSkyBlockAPI {
                 uSkyBlock.skyBlockWorld.save();
             }
             MultiverseCoreHandler.importWorld(skyBlockWorld);
+            setupWorld(skyBlockWorld);
+
         }
         return uSkyBlock.skyBlockWorld;
+    }
+
+    private void setupWorld(World skyWorld) {
+        if (Settings.general_spawnSize > 0) {
+            if (LocationUtil.isEmptyLocation(skyWorld.getSpawnLocation())) {
+                skyWorld.setSpawnLocation(0, Settings.island_height, 0);
+            }
+            Location worldSpawn = skyWorld.getSpawnLocation();
+            Block spawnBlock = skyWorld.getBlockAt(worldSpawn);
+            if (!spawnBlock.getType().isSolid()) {
+                spawnBlock.setType(Material.BEDROCK);
+            }
+        }
     }
 
     public static World getSkyBlockWorld() {
@@ -507,6 +499,7 @@ public class uSkyBlock extends JavaPlugin implements uSkyBlockAPI {
     }
 
     private void postRestart(final Player player, final Location next) {
+        getLogger().log(Level.FINE, "executing postRestart for " + player + " on " + next);
         islandGenerator.createIsland(this, player, next);
         changePlayerBiome(player, "OCEAN");
         next.setY((double) Settings.island_height);
@@ -515,12 +508,18 @@ public class uSkyBlock extends JavaPlugin implements uSkyBlockAPI {
         getServer().getScheduler().runTaskLater(uSkyBlock.getInstance(), new Runnable() {
             @Override
             public void run() {
+                getLogger().log(Level.FINE, "porting player back to the island");
                 homeTeleport(player);
-                clearPlayerInventory(player);
-                clearEntitiesNearPlayer(player);
-                WorldEditHandler.refreshRegion(player.getLocation());
+                getServer().getScheduler().runTaskLater(uSkyBlock.this, new Runnable() {
+                    @Override
+                    public void run() {
+                        clearPlayerInventory(player);
+                        //clearEntitiesNearPlayer(player);
+                        WorldEditHandler.refreshRegion(player.getLocation());
+                    }
+                }, 20);
             }
-        }, 10);
+        }, 20);
     }
 
     public boolean restartPlayerIsland(final Player player, final Location next) {
@@ -593,7 +592,7 @@ public class uSkyBlock extends JavaPlugin implements uSkyBlockAPI {
         if (newLoc != null) {
             if (newLoc.equals(pi.getIslandLocation())) {
                 sender.sendMessage("\u00a74Player is already assigned to this island!");
-                return true;
+                deleteOldIsland = false;
             }
             Runnable resetIsland = new Runnable() {
                 @Override
@@ -734,7 +733,11 @@ public class uSkyBlock extends JavaPlugin implements uSkyBlockAPI {
     }
 
     public void spawnTeleport(final Player player) {
-        execCommand(player, "op:spawn");
+        if (Settings.extras_sendToSpawn) {
+            execCommand(player, "op:spawn");
+        } else {
+            player.teleport(getWorld().getSpawnLocation());
+        }
     }
 
     public boolean homeSet(final Player player) {
@@ -781,7 +784,7 @@ public class uSkyBlock extends JavaPlugin implements uSkyBlockAPI {
     }
 
     public boolean islandAtLocation(final Location loc) {
-        return WorldGuardHandler.getIslandNameAt(loc) != null;
+        return WorldGuardHandler.getIntersectingRegions(loc).size() > 0;
     }
 
     public boolean islandInSpawn(final Location loc) {
@@ -1016,6 +1019,12 @@ public class uSkyBlock extends JavaPlugin implements uSkyBlockAPI {
     }
 
     public boolean setBiome(final Location loc, final String bName) {
+        Biome biome = getBiome(bName);
+        setBiome(loc, biome);
+        return biome != Biome.OCEAN;
+    }
+
+    public Biome getBiome(String bName) {
         Biome biome;
         if (bName.equalsIgnoreCase("jungle")) {
             biome = Biome.JUNGLE;
@@ -1038,8 +1047,7 @@ public class uSkyBlock extends JavaPlugin implements uSkyBlockAPI {
         } else {
             biome = Biome.OCEAN;
         }
-        setBiome(loc, biome);
-        return biome != Biome.OCEAN;
+        return biome;
     }
 
     private void setBiome(Location loc, Biome biome) {
@@ -1182,36 +1190,6 @@ public class uSkyBlock extends JavaPlugin implements uSkyBlockAPI {
             }
             lastIsland.setZ(lastIsland.getZ() - Settings.island_distance);
             return lastIsland;
-        }
-    }
-
-    public void setChest(final Location loc, final Player player) {
-        for (int x = -15; x <= 15; ++x) {
-            for (int y = -15; y <= 15; ++y) {
-                for (int z = -15; z <= 15; ++z) {
-                    if (skyBlockWorld.getBlockAt(loc.getBlockX() + x, loc.getBlockY() + y, loc.getBlockZ() + z).getTypeId() == 54) {
-                        final Block blockToChange = skyBlockWorld.getBlockAt(loc.getBlockX() + x, loc.getBlockY() + y, loc.getBlockZ() + z);
-                        final Chest chest = (Chest) blockToChange.getState();
-                        final Inventory inventory = chest.getInventory();
-                        inventory.clear();
-                        inventory.setContents(Settings.island_chestItems);
-                        if (Settings.island_addExtraItems) {
-                            for (int i = 0; i < Settings.island_extraPermissions.length; ++i) {
-                                if (VaultHandler.checkPerk(player.getName(), "usb." + Settings.island_extraPermissions[i], player.getWorld())) {
-                                    final String[] chestItemString = getConfig().getString("options.island.extraPermissions." + Settings.island_extraPermissions[i]).split(" ");
-                                    final ItemStack[] tempChest = new ItemStack[chestItemString.length];
-                                    String[] amountdata;
-                                    for (int j = 0; j < chestItemString.length; ++j) {
-                                        amountdata = chestItemString[j].split(":");
-                                        tempChest[j] = new ItemStack(Integer.parseInt(amountdata[0], 10), Integer.parseInt(amountdata[1], 10));
-                                        inventory.addItem(new ItemStack[]{tempChest[j]});
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
         }
     }
 
@@ -1373,10 +1351,8 @@ public class uSkyBlock extends JavaPlugin implements uSkyBlockAPI {
             saveConfig();
         }
         // Update all of the loaded configs.
-        for (Map.Entry<String, FileConfiguration> e : configFiles.entrySet()) {
-            File configFile = new File(getDataFolder(), e.getKey());
-            readConfig(e.getValue(), configFile);
-        }
+        FileUtil.reload();
+
         PlayerDB playerDB = new FilePlayerDB(new File(getDataFolder(), "uuid2name.yml"));
         PlayerUtil.loadConfig(playerDB, getConfig());
         activePlayers.clear();
@@ -1530,5 +1506,13 @@ public class uSkyBlock extends JavaPlugin implements uSkyBlockAPI {
         getIslandLogic().updateRank(islandInfo, score);
         fireChangeEvent(new uSkyBlockScoreChangedEvent(player, this, score));
         return score;
+    }
+
+    public synchronized boolean isProtectAllActive() {
+        return protectAllActive;
+    }
+
+    public synchronized void setProtectAllActive(boolean protectAllActive) {
+        this.protectAllActive = protectAllActive;
     }
 }

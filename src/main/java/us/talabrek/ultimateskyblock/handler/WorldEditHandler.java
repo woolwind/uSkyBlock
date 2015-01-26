@@ -142,12 +142,29 @@ public class WorldEditHandler {
         return new CuboidRegion(new BukkitWorld(skyWorld), region.getMinimumPoint(), region.getMaximumPoint());
     }
 
-    public static void refreshRegion(Location location) {
+    public static void loadRegion(Location location) {
         ProtectedRegion region = WorldGuardHandler.getIslandRegionAt(location);
         World world = location.getWorld();
         Region cube = getRegion(world, region);
         for (Vector2D chunk : cube.getChunks()) {
             world.loadChunk(chunk.getBlockX(), chunk.getBlockZ(), false);
+        }
+    }
+
+    public static void unloadRegion(Location location) {
+        ProtectedRegion region = WorldGuardHandler.getIslandRegionAt(location);
+        World world = location.getWorld();
+        Region cube = getRegion(world, region);
+        for (Vector2D chunk : cube.getChunks()) {
+            world.unloadChunk(chunk.getBlockX(), chunk.getBlockZ(), false);
+        }
+    }
+
+    public static void refreshRegion(Location location) {
+        ProtectedRegion region = WorldGuardHandler.getIslandRegionAt(location);
+        World world = location.getWorld();
+        Region cube = getRegion(world, region);
+        for (Vector2D chunk : cube.getChunks()) {
             world.refreshChunk(chunk.getBlockX(), chunk.getBlockZ());
         }
     }
